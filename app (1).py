@@ -44,7 +44,7 @@ from tampilan import (
 )
 
 # ---- UBAH IDENTITAS ANDA DI SINI ----
-IDENTITAS = "Nama Anda | NIM | Program Studi Teknik Sipil"
+IDENTITAS = "Dwi Galang | 2420503072 | Program Studi Teknik Sipil"
 
 st.set_page_config(page_title="Kalkulator Kapasitas Jalan", page_icon="🛣️", layout="wide")
 
