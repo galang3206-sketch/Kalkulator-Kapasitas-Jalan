@@ -1,21 +1,33 @@
 """Analisis lanjutan di atas perhitungan kapasitas dasar (tanpa tampilan).
 
-- skenario_perbaikan : bandingkan beberapa usulan perbaikan jalan
+- skenario_perbaikan : bandingkan usulan perbaikan (termasuk skenario buatan sendiri)
 - lebar_minimum      : lebar jalur terkecil agar DJ memenuhi batas
 - proyeksi           : DJ dari tahun ke tahun bila lalu lintas tumbuh
 - jam_puncak         : jam puncak dan PHF dari data survei per 15 menit
 - langkah_perhitungan: rumus dengan angka yang sudah disubstitusi (LaTeX)
+- interpretasi       : kalimat penjelasan hasil dalam bahasa Indonesia
+- daftar ruas        : baris perbandingan, ekspor/impor CSV
+- CONTOH_KASUS       : data contoh yang bisa dimuat satu klik
 """
+import json
+
 import numpy as np
 import pandas as pd
 
-from kapasitas import FC_LJ_TABEL, KELAS_HS, TIPE_JALAN, hitung_kapasitas
+from kapasitas import (
+    FC_LJ_TABEL,
+    KELAS_HS,
+    TIPE_JALAN,
+    UKURAN_KOTA_OPSI,
+    hitung_kapasitas,
+)
 
 BATAS_DJ = 0.85
+NAMA_KUSTOM = "Skenario Anda"
 
 
 # ------------------------------------------------------------
-# Format angka untuk LaTeX (koma desimal Indonesia)
+# Format angka (koma desimal Indonesia)
 # ------------------------------------------------------------
 def _angka(x, nd=3):
     return f"{x:.{nd}f}".replace(".", "{,}")
@@ -29,6 +41,11 @@ def _bil(x):
 
 def _koma(x):
     return f"{x:g}".replace(".", ",")
+
+
+def _idf(x, nd=3):
+    """Angka biasa dengan koma desimal (untuk kalimat, bukan LaTeX)."""
+    return f"{x:.{nd}f}".replace(".", ",")
 
 
 # ------------------------------------------------------------
@@ -50,10 +67,71 @@ def langkah_perhitungan(param, h):
 
 
 # ------------------------------------------------------------
+# Interpretasi hasil
+# ------------------------------------------------------------
+DESKRIPSI_LOS = {
+    "A": "arus bebas, pengemudi hampir tidak terpengaruh kendaraan lain",
+    "B": "arus stabil, mulai terasa pengaruh kendaraan lain",
+    "C": "arus stabil, kecepatan mulai dibatasi oleh lalu lintas",
+    "D": "mendekati arus tidak stabil, kecepatan menurun dan peka terhadap gangguan",
+    "E": "arus tidak stabil, volume mendekati kapasitas",
+    "F": "arus terhambat, antrean dan tundaan panjang",
+}
+
+
+def interpretasi(param, h):
+    """Beberapa kalimat penjelasan hasil: kondisi, faktor pembatas, dan langkah berikutnya."""
+    ok = h["DJ"] <= BATAS_DJ
+    kalimat = [f"DJ = {_idf(h['DJ'])} termasuk tingkat pelayanan {h['LOS']} "
+               f"({DESKRIPSI_LOS[h['LOS']]})."]
+
+    # Faktor yang bisa diperbaiki pengelola jalan: lebar jalur dan hambatan samping
+    bisa = {"lebar jalur (FC_LJ)": h["FC_LJ"], "hambatan samping (FC_HS)": h["FC_HS"]}
+    nama_f = min(bisa, key=bisa.get)
+    if bisa[nama_f] < 0.98:
+        kalimat.append(f"Faktor yang paling mengurangi kapasitas dan masih bisa diperbaiki adalah "
+                       f"{nama_f} = {_idf(bisa[nama_f])}.")
+
+    if KELAS_HS.index(param["kelas_hs"]) >= 1:
+        p = dict(param)
+        p["kelas_hs"] = KELAS_HS[0]
+        naik = hitung_kapasitas(**p)["C"] / h["C"] - 1
+        if naik >= 0.02:
+            kalimat.append(f"Bila hambatan samping dapat ditekan ke 'Sangat rendah' (penertiban parkir "
+                           f"dan pedagang kaki lima), kapasitas naik sekitar {naik * 100:.0f}%.")
+
+    if h["Q"] > 0:
+        if ok:
+            cadangan = (BATAS_DJ * h["C"] / h["Q"] - 1) * 100
+            kalimat.append(f"Arus masih dapat bertambah sekitar {cadangan:.0f}% sebelum DJ mencapai "
+                           f"{_idf(BATAS_DJ, 2)}.")
+        else:
+            naik_c = (h["Q"] / BATAS_DJ / h["C"] - 1) * 100
+            turun_q = (1 - BATAS_DJ * h["C"] / h["Q"]) * 100
+            kalimat.append(f"Agar DJ ≤ {_idf(BATAS_DJ, 2)}, kapasitas perlu naik sekitar {naik_c:.0f}% "
+                           f"atau arus turun sekitar {turun_q:.0f}%. Lihat tab Skenario perbaikan.")
+    return kalimat
+
+
+# ------------------------------------------------------------
 # Skenario perbaikan
 # ------------------------------------------------------------
-def skenario_perbaikan(param):
-    """Bandingkan kondisi eksisting dengan beberapa usulan perbaikan."""
+def ubah_skenario(param, d_lebar=0.0, d_bahu=0.0, kelas_hs=None, d_volume_persen=0.0):
+    """Susun perubahan parameter untuk skenario buatan sendiri."""
+    f = 1 + d_volume_persen / 100.0
+    return {
+        "lebar_total": param["lebar_total"] + d_lebar,
+        "lebar_hs": param["lebar_hs"] + d_bahu,
+        "kelas_hs": kelas_hs or param["kelas_hs"],
+        "kr": param["kr"] * f, "kb": param["kb"] * f, "sm": param["sm"] * f,
+    }
+
+
+def skenario_perbaikan(param, kustom=None):
+    """Bandingkan kondisi eksisting dengan beberapa usulan perbaikan.
+
+    kustom: dict perubahan dari ubah_skenario(); ditambahkan sebagai baris NAMA_KUSTOM.
+    """
     lajur = TIPE_JALAN[param["tipe"]]["lajur"]
     idx = KELAS_HS.index(param["kelas_hs"])
     kelas_turun = KELAS_HS[max(idx - 1, 0)]
@@ -73,6 +151,8 @@ def skenario_perbaikan(param):
         "Kombinasi: lebar +" + _koma(0.5 * lajur) + " m, bahu +0,5 m, HS turun satu kelas",
         {"lebar_total": w + 0.5 * lajur, "lebar_hs": hs + 0.5, "kelas_hs": kelas_turun},
     ))
+    if kustom is not None:
+        daftar.append((NAMA_KUSTOM, kustom))
 
     baris = []
     for nama, ubah in daftar:
@@ -119,16 +199,23 @@ def lebar_minimum(param, target=BATAS_DJ):
 # Proyeksi pertumbuhan lalu lintas
 # ------------------------------------------------------------
 def proyeksi(param, tumbuh_persen, tahun=20):
-    """DJ tiap tahun bila semua volume tumbuh geometrik: Qn = Q0 x (1 + i)^n.
+    """DJ tiap tahun bila volume tumbuh geometrik: Qn = Q0 x (1 + i)^n.
 
+    tumbuh_persen boleh berupa satu angka (semua jenis kendaraan sama) atau dict
+    {"kr": ..., "kb": ..., "sm": ...} bila laju pertumbuhan tiap jenis berbeda.
     Mengembalikan (tabel, tahun_jenuh). tahun_jenuh adalah tahun ke-n pertama
     saat DJ melewati batas, atau None bila tidak terlewati dalam rentang tahun.
     """
+    if isinstance(tumbuh_persen, dict):
+        laju = {k: float(tumbuh_persen[k]) for k in ("kr", "kb", "sm")}
+    else:
+        laju = {k: float(tumbuh_persen) for k in ("kr", "kb", "sm")}
+
     baris = []
     for n in range(int(tahun) + 1):
-        f = (1 + tumbuh_persen / 100.0) ** n
         p = dict(param)
-        p.update(kr=param["kr"] * f, kb=param["kb"] * f, sm=param["sm"] * f)
+        for k in ("kr", "kb", "sm"):
+            p[k] = param[k] * (1 + laju[k] / 100.0) ** n
         h = hitung_kapasitas(**p)
         baris.append({"Tahun ke-": n, "Q (smp/jam)": h["Q"], "C (smp/jam)": h["C"],
                       "DJ": h["DJ"], "LOS": h["LOS"]})
@@ -195,3 +282,106 @@ def jam_puncak(df):
         "v15_maks": v15,
         "PHF": v_jam / (4 * v15),
     }
+
+
+# ------------------------------------------------------------
+# Data masukan: contoh kasus dan pemetaan ke widget
+# ------------------------------------------------------------
+KUNCI_PARAM = ["tipe", "lebar_total", "split", "jenis_hs", "kelas_hs", "lebar_hs",
+               "ukuran_kota_juta", "kr", "kb", "sm"]
+
+CONTOH_KASUS = {
+    "Kolektor lancar (2/2 TT)": {
+        "nama": "Jl. Kolektor Contoh",
+        "param": dict(tipe="2/2 TT", lebar_total=7.0, split=50.0, jenis_hs="bahu", kelas_hs="Rendah",
+                      lebar_hs=1.5, ukuran_kota_juta=0.3, kr=350.0, kb=40.0, sm=700.0),
+    },
+    "Arteri padat (4/2 T)": {
+        "nama": "Jl. Arteri Contoh",
+        "param": dict(tipe="4/2 T", lebar_total=14.0, split=50.0, jenis_hs="kereb", kelas_hs="Tinggi",
+                      lebar_hs=1.0, ukuran_kota_juta=2.0, kr=2200.0, kb=300.0, sm=4200.0),
+    },
+    "Jalan pasar jenuh (2/2 TT)": {
+        "nama": "Jl. Pasar Contoh",
+        "param": dict(tipe="2/2 TT", lebar_total=6.0, split=60.0, jenis_hs="bahu", kelas_hs="Sangat tinggi",
+                      lebar_hs=0.5, ukuran_kota_juta=0.3, kr=700.0, kb=90.0, sm=1500.0),
+    },
+}
+
+
+def label_kota(juta):
+    """Label ukuran kota (kunci UKURAN_KOTA_OPSI) yang paling dekat dengan nilai juta jiwa."""
+    return min(UKURAN_KOTA_OPSI, key=lambda k: abs(UKURAN_KOTA_OPSI[k] - float(juta)))
+
+
+def input_dari_param(nama, param):
+    """Pemetaan param -> nilai widget input (semua angka bertipe float)."""
+    return {
+        "in_nama": str(nama),
+        "in_tipe": param["tipe"],
+        "in_lebar": float(param["lebar_total"]),
+        "in_split": float(param["split"]),
+        "in_jenis": param["jenis_hs"],
+        "in_lebar_hs": float(param["lebar_hs"]),
+        "in_kelas": param["kelas_hs"],
+        "in_kota": label_kota(param["ukuran_kota_juta"]),
+        "in_kr": float(param["kr"]),
+        "in_kb": float(param["kb"]),
+        "in_sm": float(param["sm"]),
+    }
+
+
+DEFAULT_INPUT = input_dari_param("Ruas 1", dict(
+    tipe="2/2 TT", lebar_total=7.0, split=50.0, jenis_hs="bahu", kelas_hs="Sedang", lebar_hs=1.0,
+    ukuran_kota_juta=0.3, kr=600.0, kb=80.0, sm=1200.0))
+
+
+# ------------------------------------------------------------
+# Daftar perbandingan ruas (simpan, ekspor, impor)
+# ------------------------------------------------------------
+def baris_daftar(nama, param):
+    """Hitung satu ruas dan kembalikan baris untuk daftar perbandingan."""
+    h = hitung_kapasitas(**param)
+    return {
+        "Ruas": str(nama), "Tipe": param["tipe"], "Lebar (m)": float(param["lebar_total"]),
+        "Kelas HS": param["kelas_hs"], "C (smp/jam)": h["C"], "Q (smp/jam)": h["Q"],
+        "DJ": h["DJ"], "LOS": h["LOS"],
+        "Status": "Memenuhi" if h["DJ"] <= BATAS_DJ else "Tidak memenuhi",
+        "param": json.dumps({k: param[k] for k in KUNCI_PARAM}),
+    }
+
+
+def simpan_ke_daftar(daftar, baris):
+    """Tambahkan baris; bila nama ruas sama, baris lama diganti."""
+    return [r for r in daftar if r["Ruas"] != baris["Ruas"]] + [baris]
+
+
+def daftar_ke_csv(daftar):
+    return pd.DataFrame(daftar).to_csv(index=False).encode("utf-8")
+
+
+def daftar_dari_csv(df):
+    """Bangun ulang daftar dari CSV hasil ekspor. Hasil dihitung ulang dari parameter.
+
+    Mengembalikan (daftar, jumlah_baris_gagal).
+    """
+    if "Ruas" not in df.columns or "param" not in df.columns:
+        raise ValueError("File bukan hasil ekspor daftar perbandingan (kolom 'Ruas' dan 'param' tidak ada).")
+    hasil, gagal = [], 0
+    for _, r in df.iterrows():
+        try:
+            param = json.loads(r["param"])
+            if any(k not in param for k in KUNCI_PARAM):
+                raise ValueError("parameter tidak lengkap")
+            hasil = simpan_ke_daftar(hasil, baris_daftar(r["Ruas"], param))
+        except Exception:
+            gagal += 1
+    return hasil, gagal
+
+
+def param_dari_batch(r):
+    """Ubah satu baris data 'banyak ruas' menjadi dict param."""
+    return dict(tipe=str(r["tipe"]).strip(), lebar_total=float(r["lebar_total"]), split=float(r["split"]),
+                jenis_hs=str(r["jenis_hs"]).strip(), kelas_hs=str(r["kelas_hs"]).strip(),
+                lebar_hs=float(r["lebar_hs"]), ukuran_kota_juta=float(r["ukuran_kota_juta"]),
+                kr=float(r["KR"]), kb=float(r["KB"]), sm=float(r["SM"]))
