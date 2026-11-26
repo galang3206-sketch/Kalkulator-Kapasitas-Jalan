@@ -58,7 +58,7 @@ from tampilan import (
 )
 
 # ---- Identitas bawaan (bisa juga diubah dari kolom di sidebar) ----
-IDENTITAS_BAWAAN = "Nama Anda | NIM | Program Studi Teknik Sipil"
+IDENTITAS_BAWAAN = "Dwi Galang | 2420503072 | Program Studi Teknik Sipil"
 
 st.set_page_config(page_title="Kalkulator Kapasitas Jalan", page_icon="🛣️", layout="wide",
                    initial_sidebar_state="expanded")
