@@ -16,7 +16,7 @@ from matplotlib.backends.backend_pdf import PdfPages  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
 
-from analisis import BATAS_DJ  # noqa: E402
+from analisis import BATAS_DJ, NAMA_KUSTOM, interpretasi  # noqa: E402
 from kapasitas import KELAS_HS, hitung_kapasitas  # noqa: E402
 
 # ---- Palet (nilai tervalidasi, lihat catatan di akhir berkas) ----
@@ -161,7 +161,8 @@ def grafik_skenario(df):
     fig, ax = plt.subplots(figsize=(9, 0.55 * n + 1.4))
     nama = ["\n".join(textwrap.wrap(s, 38)) for s in df["Skenario"]]
     y = list(range(n))[::-1]
-    warna = [REDUP if s == "Kondisi eksisting" else BIRU for s in df["Skenario"]]
+    warna = [REDUP if s == "Kondisi eksisting" else ORANYE if s == NAMA_KUSTOM else BIRU
+             for s in df["Skenario"]]
     ax.barh(y, df["DJ"], color=warna, height=0.55, zorder=3)
     for yi, dj, st_ in zip(y, df["DJ"], df["Status"]):
         _label_nilai(ax, dj, yi, f"{fmt_id(dj, 3)} ({st_.lower()})")
@@ -171,28 +172,42 @@ def grafik_skenario(df):
     ax.set_xlim(0, max(1.0, df["DJ"].max() * 1.45))
     ax.set_xlabel("Derajat kejenuhan (DJ)")
     _gaya(ax, "x")
-    ax.legend(handles=[Patch(color=REDUP, label="Kondisi eksisting"), Patch(color=BIRU, label="Skenario perbaikan")],
-              frameon=False, loc="lower right", fontsize=8)
+    legenda = [Patch(color=REDUP, label="Kondisi eksisting"), Patch(color=BIRU, label="Skenario perbaikan")]
+    if NAMA_KUSTOM in set(df["Skenario"]):
+        legenda.append(Patch(color=ORANYE, label=NAMA_KUSTOM))
+    ax.legend(handles=legenda, frameon=False, loc="lower right", fontsize=8)
     fig.tight_layout()
     return fig
 
 
-def grafik_proyeksi(df, tahun_jenuh):
-    fig, ax = plt.subplots(figsize=(9, 4))
-    ax.plot(df["Tahun ke-"], df["DJ"], color=BIRU, linewidth=2, zorder=3)
+def _tandai_jenuh(ax, df, tahun, warna, offset, ha):
+    dj = float(df.loc[df["Tahun ke-"] == tahun, "DJ"].iloc[0])
+    ax.plot([tahun], [dj], marker="o", markersize=9, color=warna,
+            markeredgecolor=PERMUKAAN, markeredgewidth=2, zorder=4)
+    ax.annotate(f"Tahun ke-{tahun}: DJ = {fmt_id(dj, 2)}", (tahun, dj), textcoords="offset points",
+                xytext=offset, ha=ha, fontsize=8.5, arrowprops=dict(arrowstyle="-", color=REDUP))
+
+
+def grafik_proyeksi(df, tahun_jenuh, df2=None, tahun_jenuh2=None,
+                    label1="Kondisi sekarang", label2=NAMA_KUSTOM):
+    """DJ per tahun. df2 (opsional) = seri kedua, mis. setelah skenario perbaikan."""
+    fig, ax = plt.subplots(figsize=(9, 4.2))
+    ax.plot(df["Tahun ke-"], df["DJ"], color=BIRU, linewidth=2, zorder=3, label=label1)
+    if df2 is not None:
+        ax.plot(df2["Tahun ke-"], df2["DJ"], color=ORANYE, linewidth=2, zorder=3, label=label2)
     _garis_batas(ax, BATAS_DJ, "Batas DJ = 0,85", arah="h")
     if tahun_jenuh is not None:
-        dj = float(df.loc[df["Tahun ke-"] == tahun_jenuh, "DJ"].iloc[0])
-        ax.plot([tahun_jenuh], [dj], marker="o", markersize=9, color=BIRU,
-                markeredgecolor=PERMUKAAN, markeredgewidth=2, zorder=4)
-        ax.annotate(f"Tahun ke-{tahun_jenuh}: DJ = {fmt_id(dj, 2)}\n(mulai melewati batas)",
-                    (tahun_jenuh, dj), textcoords="offset points", xytext=(-14, 26),
-                    ha="right", fontsize=8.5, arrowprops=dict(arrowstyle="-", color=REDUP))
+        _tandai_jenuh(ax, df, tahun_jenuh, BIRU, (-14, 26), "right")
+    if df2 is not None and tahun_jenuh2 is not None:
+        _tandai_jenuh(ax, df2, tahun_jenuh2, ORANYE, (14, -34), "left")
+    ymaks = df["DJ"].max() if df2 is None else max(df["DJ"].max(), df2["DJ"].max())
     ax.set_xlim(0, df["Tahun ke-"].max())
-    ax.set_ylim(0, max(1.0, df["DJ"].max() * 1.1))
+    ax.set_ylim(0, max(1.0, ymaks * 1.1))
     ax.set_xlabel("Tahun ke-")
     ax.set_ylabel("Derajat kejenuhan (DJ)")
     _gaya(ax, "y")
+    if df2 is not None:
+        ax.legend(frameon=False, loc="upper left", fontsize=8.5)
     fig.tight_layout()
     return fig
 
@@ -240,7 +255,7 @@ def grafik_jam_puncak(res):
 _A4 = (8.27, 11.69)
 
 
-def _tabel(ax, atas, baris, judul_kolom, lebar_kolom, tebal=(), tinggi=0.024):
+def _tabel(ax, atas, baris, judul_kolom, lebar_kolom, tebal=(), tinggi=0.0215):
     """Gambar tabel dengan tepi atas di y=atas (koordinat sumbu); kembalikan tepi bawah."""
     n = len(baris) + 1
     bawah = atas - n * tinggi
@@ -306,9 +321,12 @@ def laporan_pdf(identitas, param, h, nama_ruas=""):
         kesimpulan = (f"Derajat kejenuhan DJ = {fmt_id(h['DJ'], 3)} {simbol} {fmt_id(BATAS_DJ, 2)}, sehingga kinerja "
                       f"ruas jalan {'MEMENUHI' if ok else 'TIDAK MEMENUHI'} syarat (tingkat pelayanan {h['LOS']}).")
         teks = "\n".join(textwrap.wrap(kesimpulan, 100))
+        teks += "\n\nInterpretasi:"
+        for k in interpretasi(param, h):
+            teks += "\n" + "\n".join(textwrap.wrap("- " + k, 100, subsequent_indent="  "))
         for p in h["peringatan"]:
             teks += "\n\nPeringatan: " + "\n".join(textwrap.wrap(p, 100))
-        ax.text(0, y - 0.046, teks, fontsize=9, va="top", linespacing=1.4)
+        ax.text(0, y - 0.046, teks, fontsize=8.8, va="top", linespacing=1.3)
 
         ax.text(0, 0.0, "Dibuat dengan Kalkulator Kapasitas Jalan Perkotaan. Untuk keperluan pembelajaran; "
                         "nilai tabel perlu dicocokkan dengan edisi PKJI yang berlaku.",
