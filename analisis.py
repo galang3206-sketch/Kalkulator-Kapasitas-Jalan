@@ -299,12 +299,12 @@ CONTOH_KASUS = {
     "Arteri padat (4/2 T)": {
         "nama": "Jl. Arteri Contoh",
         "param": dict(tipe="4/2 T", lebar_total=14.0, split=50.0, jenis_hs="kereb", kelas_hs="Tinggi",
-                      lebar_hs=1.0, ukuran_kota_juta=2.0, kr=2200.0, kb=300.0, sm=4200.0),
+                      lebar_hs=1.0, ukuran_kota_juta=2.0, kr=2800.0, kb=380.0, sm=5200.0),
     },
     "Jalan pasar jenuh (2/2 TT)": {
         "nama": "Jl. Pasar Contoh",
         "param": dict(tipe="2/2 TT", lebar_total=6.0, split=60.0, jenis_hs="bahu", kelas_hs="Sangat tinggi",
-                      lebar_hs=0.5, ukuran_kota_juta=0.3, kr=700.0, kb=90.0, sm=1500.0),
+                      lebar_hs=0.5, ukuran_kota_juta=0.3, kr=900.0, kb=120.0, sm=2000.0),
     },
 }
 
